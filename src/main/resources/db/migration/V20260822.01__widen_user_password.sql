@@ -1,0 +1,2 @@
+ALTER TABLE sys_user
+    MODIFY COLUMN password VARCHAR(100) NOT NULL;

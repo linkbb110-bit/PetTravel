@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.nfu.pettravel.mapper.InventoryCompensationTaskMapper">
+    <resultMap id="TaskResultMap" type="com.nfu.pettravel.entity.InventoryCompensationTask">
+        <id property="id" column="id" />
+        <result property="orderId" column="order_id" />
+        <result property="routeId" column="route_id" />
+        <result property="taskType" column="task_type"
+                typeHandler="com.baomidou.mybatisplus.core.handlers.MybatisEnumTypeHandler" />
+        <result property="taskStatus" column="task_status"
+                typeHandler="com.baomidou.mybatisplus.core.handlers.MybatisEnumTypeHandler" />
+        <result property="retryCount" column="retry_count" />
+        <result property="nextRetryTime" column="next_retry_time" />
+        <result property="lastError" column="last_error" />
+        <result property="createTime" column="create_time" />
+        <result property="updateTime" column="update_time" />
+    </resultMap>
+
+    <update id="markSucceeded">
+        UPDATE inventory_compensation_task
+        SET task_status = 'SUCCEEDED',
+            update_time = CURRENT_TIMESTAMP,
+            last_error = NULL
+        WHERE order_id = #{orderId}
+          AND task_type = #{taskType}
+          AND task_status != 'SUCCEEDED'
+    </update>
+
+    <select id="findDueTasks" resultMap="TaskResultMap">
+        SELECT id, order_id, route_id, task_type, task_status, retry_count,
+               next_retry_time, last_error, create_time, update_time
+        FROM inventory_compensation_task
+        WHERE task_status = 'PENDING'
+          AND next_retry_time &lt;= #{now}
+        ORDER BY next_retry_time, id
+        LIMIT #{limit}
+    </select>
+
+    <update id="claim">
+        UPDATE inventory_compensation_task
+        SET task_status = 'PROCESSING',
+            update_time = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+          AND task_status = 'PENDING'
+    </update>
+
+    <update id="complete">
+        UPDATE inventory_compensation_task
+        SET task_status = 'SUCCEEDED',
+            update_time = CURRENT_TIMESTAMP,
+            last_error = NULL
+        WHERE id = #{id}
+          AND task_status = 'PROCESSING'
+    </update>
+
+    <update id="retry">
+        UPDATE inventory_compensation_task
+        SET retry_count = retry_count + 1,
+            task_status = CASE
+                WHEN retry_count + 1 &gt;= #{maxRetries} THEN 'NEEDS_RECONCILE'
+                ELSE 'PENDING'
+            END,
+            next_retry_time = #{nextRetryTime},
+            last_error = #{lastError},
+            update_time = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+          AND task_status = 'PROCESSING'
+    </update>
+
+    <update id="requeueStale">
+        UPDATE inventory_compensation_task
+        SET task_status = 'PENDING',
+            update_time = CURRENT_TIMESTAMP
+        WHERE task_status = 'PROCESSING'
+          AND update_time &lt;= #{staleBefore}
+    </update>
+
+    <select id="countBlockingByRoute" resultType="long">
+        SELECT COUNT(*)
+        FROM inventory_compensation_task
+        WHERE route_id = #{routeId}
+          AND task_status IN ('PENDING', 'PROCESSING')
+          AND task_type != 'ROUTE_RECONCILE'
+    </select>
+
+    <update id="resetRouteReconciliation">
+        UPDATE inventory_compensation_task
+        SET task_status = 'PENDING',
+            retry_count = 0,
+            next_retry_time = #{nextRetryTime},
+            last_error = NULL,
+            update_time = CURRENT_TIMESTAMP
+        WHERE order_id = #{routeId}
+          AND task_type = 'ROUTE_RECONCILE'
+    </update>
+
+    <select id="findNeedsReconcileRouteIds" resultType="long">
+        SELECT DISTINCT route_id
+        FROM inventory_compensation_task
+        WHERE task_status = 'NEEDS_RECONCILE'
+        ORDER BY route_id
+        LIMIT #{limit}
+    </select>
+
+    <update id="markNeedsReconcileSucceeded">
+        UPDATE inventory_compensation_task
+        SET task_status = 'SUCCEEDED',
+            update_time = CURRENT_TIMESTAMP,
+            last_error = NULL
+        WHERE route_id = #{routeId}
+          AND task_status = 'NEEDS_RECONCILE'
+    </update>
+</mapper>

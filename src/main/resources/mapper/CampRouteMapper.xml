@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.nfu.pettravel.mapper.CampRouteMapper">
+
+    <resultMap id="BaseResultMap" type="com.nfu.pettravel.entity.CampRoute">
+            <id property="id" column="id" />
+            <result property="title" column="title" />
+            <result property="price" column="price" />
+            <result property="totalStock" column="total_stock" />
+            <result property="availableStock" column="available_stock" />
+            <result property="version" column="version" />
+            <result property="status" column="status" />
+            <result property="createTime" column="create_time" />
+            <result property="updateTime" column="update_time" />
+            <result property="isDeleted" column="is_deleted" />
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id,title,price,total_stock,available_stock,version,
+        status,create_time,update_time,is_deleted
+    </sql>
+
+    <update id="decreaseStock">
+        UPDATE camp_route
+        SET available_stock = available_stock - #{quantity},
+            version = version + 1,
+            update_time = CURRENT_TIMESTAMP
+        WHERE id = #{routeId}
+          AND status = 1
+          AND is_deleted = 0
+          AND available_stock &gt;= #{quantity}
+    </update>
+
+    <update id="increaseStock">
+        UPDATE camp_route
+        SET available_stock = available_stock + #{quantity},
+            version = version + 1,
+            update_time = CURRENT_TIMESTAMP
+        WHERE id = #{routeId}
+          AND is_deleted = 0
+          AND available_stock + #{quantity} &lt;= total_stock
+    </update>
+
+    <select id="selectAvailableStockForUpdate" resultType="int">
+        SELECT available_stock
+        FROM camp_route
+        WHERE id = #{routeId}
+          AND is_deleted = 0
+        FOR UPDATE
+    </select>
+
+    <update id="updateDefinition">
+        UPDATE camp_route
+        SET title = #{title},
+            price = #{price},
+            available_stock = #{totalStock} - (total_stock - available_stock),
+            total_stock = #{totalStock},
+            status = #{status},
+            version = version + 1,
+            update_time = CURRENT_TIMESTAMP
+        WHERE id = #{routeId}
+          AND is_deleted = 0
+          AND #{totalStock} &gt;= total_stock - available_stock
+    </update>
+</mapper>
