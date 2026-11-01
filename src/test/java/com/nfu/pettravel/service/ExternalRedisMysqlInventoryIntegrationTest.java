@@ -1,5 +1,5 @@
 package com.nfu.pettravel.service;
-
+import org.springframework.data.redis.core.StringRedisTemplate;
 import com.nfu.pettravel.PetTravelApplication;
 import com.nfu.pettravel.common.ErrorCode;
 import com.nfu.pettravel.exception.BusinessException;
@@ -66,7 +66,8 @@ class ExternalRedisMysqlInventoryIntegrationTest {
         registry.add("pettravel.order.timeout-scan-initial-delay", () -> "3600000");
         registry.add("pettravel.inventory.recovery-initial-delay", () -> "3600000");
     }
-
+    @Autowired
+    private StringRedisTemplate redisTemplate;
     @Autowired
     private BookingOrchestrator bookingOrchestrator;
     @Autowired
@@ -190,54 +191,70 @@ class ExternalRedisMysqlInventoryIntegrationTest {
         assertThat(inventoryGateway.getStock(ROUTE_ID)).isEqualTo(100L);
     }
 
-    @Test
-    void shouldAcquireRedisLockBeforeWaitingForMysqlRouteRowLock() throws Exception {
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-        CountDownLatch mysqlRowLocked = new CountDownLatch(1);
-        CountDownLatch releaseMysqlRow = new CountDownLatch(1);
-        try {
-            Future<?> holder = executor.submit(() -> new TransactionTemplate(transactionManager)
-                    .executeWithoutResult(status -> {
-                        jdbcTemplate.queryForObject(
-                                "SELECT available_stock FROM camp_route WHERE id = ? FOR UPDATE",
-                                Integer.class, ROUTE_ID);
-                        mysqlRowLocked.countDown();
-                        try {
-                            if (!releaseMysqlRow.await(10, TimeUnit.SECONDS)) {
-                                throw new IllegalStateException("Timed out waiting to release MySQL row");
+  
+@Test
+void shouldAcquireRedisLockBeforeWaitingForMysqlRouteRowLock() throws Exception {
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    CountDownLatch mysqlRowLocked = new CountDownLatch(1);
+    CountDownLatch releaseMysqlRow = new CountDownLatch(1);
+
+    try {
+        Future<?> holder = executor.submit(() ->
+                new TransactionTemplate(transactionManager)
+                        .executeWithoutResult(status -> {
+                            jdbcTemplate.queryForObject(
+                                    "SELECT available_stock FROM camp_route WHERE id = ? FOR UPDATE",
+                                    Integer.class, ROUTE_ID);
+
+                            mysqlRowLocked.countDown();
+
+                            try {
+                                if (!releaseMysqlRow.await(10, TimeUnit.SECONDS)) {
+                                    throw new IllegalStateException(
+                                            "Timed out waiting to release MySQL row");
+                                }
+                            } catch (InterruptedException interrupted) {
+                                Thread.currentThread().interrupt();
+                                throw new IllegalStateException(interrupted);
                             }
-                        } catch (InterruptedException interrupted) {
-                            Thread.currentThread().interrupt();
-                            throw new IllegalStateException(interrupted);
-                        }
-                    }));
-            assertThat(mysqlRowLocked.await(5, TimeUnit.SECONDS)).isTrue();
-            Future<Boolean> reconciliation = executor.submit(
-                    () -> reconciliationService.reconcile(ROUTE_ID));
+                        }));
 
-            boolean reconciliationLockObserved = false;
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (System.nanoTime() < deadline) {
-                String competingToken = inventoryGateway.tryAcquireReconciliationLock(ROUTE_ID);
-                if (competingToken == null) {
-                    reconciliationLockObserved = true;
-                    break;
-                }
-                inventoryGateway.releaseReconciliationLock(ROUTE_ID, competingToken);
-                Thread.yield();
+        assertThat(mysqlRowLocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+        Future<Boolean> reconciliation = executor.submit(
+                () -> reconciliationService.reconcile(ROUTE_ID));
+
+        // 只观察 Redis 锁，不参与锁竞争
+        String lockKey =
+                "pettravel:inventory:{" + ROUTE_ID + "}:reconcile-lock";
+
+        boolean reconciliationLockObserved = false;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+
+        while (System.nanoTime() < deadline) {
+            if (Boolean.TRUE.equals(redisTemplate.hasKey(lockKey))) {
+                reconciliationLockObserved = true;
+                break;
             }
-            assertThat(reconciliationLockObserved).isTrue();
-            assertThatThrownBy(() -> inventoryGateway.reserve(ROUTE_ID, 992L, 1))
-                    .isInstanceOfSatisfying(BusinessException.class,
-                            exception -> assertThat(exception.getErrorCode())
-                                    .isEqualTo(ErrorCode.INVENTORY_BUSY));
-
-            releaseMysqlRow.countDown();
-            holder.get(10, TimeUnit.SECONDS);
-            assertThat(reconciliation.get(10, TimeUnit.SECONDS)).isTrue();
-        } finally {
-            releaseMysqlRow.countDown();
-            executor.shutdownNow();
+            Thread.sleep(20);
         }
+
+        assertThat(reconciliationLockObserved).isTrue();
+
+        // 对账锁持有期间，新的库存预扣应被拒绝
+        assertThatThrownBy(() -> inventoryGateway.reserve(ROUTE_ID, 992L, 1))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(ErrorCode.INVENTORY_BUSY));
+
+        releaseMysqlRow.countDown();
+
+        holder.get(10, TimeUnit.SECONDS);
+        assertThat(reconciliation.get(10, TimeUnit.SECONDS)).isTrue();
+
+    } finally {
+        releaseMysqlRow.countDown();
+        executor.shutdownNow();
     }
+}
 }
