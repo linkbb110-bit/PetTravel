@@ -3,12 +3,11 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <!-- 替换为你自己的 groupId 和 artifactId -->
     <groupId>com.nfu</groupId>
     <artifactId>pettravel</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>PetTravel</name>
-    <description>携宠游项目 - 后端实习生面试核心项目</description>
+    <description>携宠出游路线预约管理系统后端</description>
 
     <!-- 锁定 Spring Boot 3.2.4 -->
     <parent>
@@ -38,7 +37,7 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
-        <!-- AOP切面 (阶段二：操作日志记录需要) -->
+        <!-- AOP 操作日志 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-aop</artifactId>
@@ -80,7 +79,7 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-websocket</artifactId>
         </dependency>
-        <!-- Redis 缓存中间件 (阶段三：高并发库存需要) -->
+        <!-- Redis 缓存与并发库存 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>

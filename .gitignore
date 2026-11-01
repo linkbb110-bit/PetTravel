@@ -32,8 +32,18 @@ build/
 ### VS Code ###
 .vscode/
 
-# Codex-local Maven cache used for isolated verification
-.codex-m2/
+# Local Maven cache
+.*-m2/
 
 # Private local development configuration and credentials
 .local/
+
+# Local-only secrets and development overrides
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.jks
+src/main/resources/application-dev.yml
+src/test/resources/docker-java.properties
